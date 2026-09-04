@@ -1,0 +1,18 @@
+{
+  "name": "hashwear-support-bot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DM-to-ticket support bot for Hashwear Discord",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node --check src/index.js && node --check src/store.js && node --check src/commands.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0"
+  }
+}

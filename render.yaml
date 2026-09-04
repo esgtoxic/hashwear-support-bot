@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: hashwear-support-bot
+    runtime: node
+    plan: starter
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: DISCORD_BOT_TOKEN
+        sync: false
+      - key: DISCORD_GUILD_ID
+        sync: false
+      - key: SUPPORT_CATEGORY_ID
+        sync: false
+      - key: SUPPORT_ROLE_IDS
+        sync: false
+      - key: DATA_FILE
+        value: /var/data/tickets.json
+    disk:
+      name: hashwear-support-data
+      mountPath: /var/data
+      sizeGB: 1
