@@ -164,7 +164,7 @@ async function forwardCustomerMessage(message) {
 
   if (created) {
     await user.send(
-      'Hi! Your Hashwear Support ticket has been opened. Send your issue, screenshots, order details, or follow-up messages here and our team will reply in this DM.'
+      'Hi! Your Hashwear Support ticket has been opened. Tell us your issues with order details and our team will reply in this DM.'
     ).catch(() => {});
   }
 
