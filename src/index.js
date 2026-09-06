@@ -329,12 +329,27 @@ async function handleNotifyTextCommand(message, ticket, argsText) {
   const action = (parts[0] || '').toLowerCase();
 
   if (!action) {
-    mutateNotifications(ticket.userId, current => {
-      const set = new Set(current.notifyUserIds || []);
+    const current = getTicket(ticket.userId);
+    const alreadyNotified = (current.notifyUserIds || []).includes(message.author.id);
+
+    if (alreadyNotified) {
+      await message.reply({
+        content: `${message.author} is already being notified for this ticket.`,
+        allowedMentions: { users: [message.author.id] },
+      });
+      return;
+    }
+
+    mutateNotifications(ticket.userId, currentTicket => {
+      const set = new Set(currentTicket.notifyUserIds || []);
       set.add(message.author.id);
-      current.notifyUserIds = [...set];
+      currentTicket.notifyUserIds = [...set];
     });
 
+    await message.reply({
+      content: `${message.author} will now be notified whenever this customer sends a message.`,
+      allowedMentions: { users: [message.author.id] },
+    });
     return;
   }
 
