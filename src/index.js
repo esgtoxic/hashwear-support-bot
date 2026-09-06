@@ -153,10 +153,10 @@ async function createTicketForUser(user) {
     .setTitle('New Hashwear Support Ticket')
     .setDescription(`Customer: <@${user.id}>\nDiscord: **${user.tag}**\nUser ID: \`${user.id}\``)
     .addFields(
-      { name: 'Anonymous reply', value: '`!areply your message`', inline: false },
-      { name: 'Direct reply', value: '`!reply your message` — customer sees your staff name', inline: false },
+      { name: 'Anonymous reply', value: '`.areply your message`', inline: false },
+      { name: 'Direct reply', value: '`.reply your message` — customer sees your staff name', inline: false },
       { name: 'Notifications', value: '`/notify add-user`, `/notify add-role`, `/notify list`', inline: false },
-      { name: 'Close', value: '`!close reason`', inline: false },
+      { name: 'Close', value: '`.close reason`', inline: false },
     )
     .setTimestamp();
 
@@ -276,7 +276,7 @@ async function sendTextReply(message, ticket, direct, replyText) {
 
   const attachments = [...message.attachments.values()];
   if (!replyText && !attachments.length) {
-    await message.reply(`Usage: ${direct ? '!reply' : '!areply'} your message`);
+    await message.reply(`Usage: ${direct ? '.reply' : '.areply'} your message`);
     return;
   }
 
@@ -324,7 +324,7 @@ async function handleTicketTextCommand(message) {
   if (!ticket || ticket.status !== 'open') return false;
 
   const content = message.content.trim();
-  const match = content.match(/^!(areply|reply|close)(?:\s+([\s\S]*))?$/i);
+  const match = content.match(/^\.(areply|reply|close)(?:\s+([\s\S]*))?$/i);
   if (!match) return false;
 
   if (!isSupportMember(message.member)) {
