@@ -2,27 +2,6 @@ const { SlashCommandBuilder } = require('discord.js');
 
 const commands = [
   new SlashCommandBuilder()
-    .setName('areply')
-    .setDescription('Reply anonymously as Hashwear Support')
-    .addStringOption(option =>
-      option.setName('message').setDescription('Type your reply').setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('reply')
-    .setDescription('Reply to the customer with your staff name visible')
-    .addStringOption(option =>
-      option.setName('message').setDescription('Type your reply').setRequired(true)
-    ),
-
-  new SlashCommandBuilder()
-    .setName('close')
-    .setDescription('Close this support ticket')
-    .addStringOption(option =>
-      option.setName('reason').setDescription('Reason for closing the ticket').setRequired(false)
-    ),
-
-  new SlashCommandBuilder()
     .setName('notify')
     .setDescription('Manage who is pinged when the customer sends a message')
     .addSubcommand(sub =>
