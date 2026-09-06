@@ -32,6 +32,7 @@ if (!TOKEN || !GUILD_ID || !SUPPORT_CATEGORY_ID) {
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
     GatewayIntentBits.DirectMessages,
     GatewayIntentBits.MessageContent,
   ],
@@ -68,6 +69,12 @@ function isSupport(interaction) {
       : [];
 
   return SUPPORT_ROLE_IDS.some(id => roleIds.includes(id));
+}
+
+function isSupportMember(member) {
+  if (!member) return false;
+  if (member.permissions?.has(PermissionFlagsBits.ManageChannels)) return true;
+  return SUPPORT_ROLE_IDS.some(id => member.roles?.cache?.has(id));
 }
 
 function ticketMentions(ticket) {
@@ -146,10 +153,10 @@ async function createTicketForUser(user) {
     .setTitle('New Hashwear Support Ticket')
     .setDescription(`Customer: <@${user.id}>\nDiscord: **${user.tag}**\nUser ID: \`${user.id}\``)
     .addFields(
-      { name: 'Anonymous reply', value: '`/areply` — customer sees “Hashwear Support”', inline: false },
-      { name: 'Direct reply', value: '`/reply` — customer sees your staff name', inline: false },
+      { name: 'Anonymous reply', value: '`!areply your message`', inline: false },
+      { name: 'Direct reply', value: '`!reply your message` — customer sees your staff name', inline: false },
       { name: 'Notifications', value: '`/notify add-user`, `/notify add-role`, `/notify list`', inline: false },
-      { name: 'Close', value: '`/close`', inline: false },
+      { name: 'Close', value: '`!close reason`', inline: false },
     )
     .setTimestamp();
 
@@ -207,49 +214,6 @@ async function getTicketContext(interaction) {
   return { ticket };
 }
 
-async function sendStaffReply(interaction, direct) {
-  const ctx = await getTicketContext(interaction);
-  if (ctx.error) return interaction.reply({ content: ctx.error, ephemeral: true });
-
-  const message = interaction.options.getString('message', true).trim();
-
-  const customer = await client.users.fetch(ctx.ticket.userId).catch(() => null);
-  if (!customer) {
-    return interaction.reply({ content: 'I could not find the customer account.', ephemeral: true });
-  }
-
-  const staffName = interaction.member?.displayName || interaction.user.globalName || interaction.user.username;
-  const dmPayload = {
-    // Discord already displays the bot name, so anonymous replies contain only the text.
-    // Direct replies show the staff member's name above the text.
-    content: direct
-      ? `**${staffName}:**\n${message}`
-      : message,
-  };
-
-  try {
-    await customer.send(dmPayload);
-  } catch (error) {
-    console.error('Customer DM failed:', error);
-    return interaction.reply({
-      content: 'I could not DM the customer. They may have DMs disabled or blocked the bot.',
-      ephemeral: true,
-    });
-  }
-
-  const log = new EmbedBuilder()
-    .setAuthor({
-      name: `${interaction.user.tag} • Staff`,
-      iconURL: interaction.user.displayAvatarURL(),
-    })
-    .setTitle(direct ? 'Direct reply sent' : 'Anonymous reply sent')
-    .setDescription(message)
-    .setTimestamp();
-
-  await interaction.reply({ content: 'Reply sent to the customer.', ephemeral: true });
-  await interaction.channel.send({ embeds: [log] });
-}
-
 async function handleNotify(interaction) {
   const ctx = await getTicketContext(interaction);
   if (ctx.error) return interaction.reply({ content: ctx.error, ephemeral: true });
@@ -303,14 +267,44 @@ async function handleNotify(interaction) {
   }
 }
 
-async function handleClose(interaction) {
-  const ctx = await getTicketContext(interaction);
-  if (ctx.error) return interaction.reply({ content: ctx.error, ephemeral: true });
+async function sendTextReply(message, ticket, direct, replyText) {
+  const customer = await client.users.fetch(ticket.userId).catch(() => null);
+  if (!customer) {
+    await message.reply('I could not find the customer account.');
+    return;
+  }
 
-  const reason = interaction.options.getString('reason')?.trim() || 'No reason provided';
-  const customer = await client.users.fetch(ctx.ticket.userId).catch(() => null);
+  const attachments = [...message.attachments.values()];
+  if (!replyText && !attachments.length) {
+    await message.reply(`Usage: ${direct ? '!reply' : '!areply'} your message`);
+    return;
+  }
 
-  closeTicket(ctx.ticket.userId, interaction.user.id, reason);
+  const staffName = message.member?.displayName || message.author.globalName || message.author.username;
+  const dmPayload = {
+    content: direct
+      ? `**${staffName}:**${replyText ? `\n${replyText}` : ''}`
+      : (replyText || undefined),
+    files: attachments.map(file => file.url),
+  };
+
+  try {
+    await customer.send(dmPayload);
+  } catch (error) {
+    console.error('Customer DM failed:', error);
+    await message.reply('I could not DM the customer. They may have DMs disabled or blocked the bot.');
+    return;
+  }
+
+  const confirmation = await message.reply('✅ Reply sent.');
+  setTimeout(() => confirmation.delete().catch(() => {}), 2500);
+}
+
+async function closeTextTicket(message, ticket, reasonText) {
+  const reason = reasonText?.trim() || 'No reason provided';
+  const customer = await client.users.fetch(ticket.userId).catch(() => null);
+
+  closeTicket(ticket.userId, message.author.id, reason);
 
   if (customer) {
     await customer.send(
@@ -318,11 +312,45 @@ async function handleClose(interaction) {
     ).catch(() => {});
   }
 
-  await interaction.reply(`Ticket closed by ${interaction.user}. Reason: **${reason}**\nThis channel will now be deleted.`);
+  await message.channel.send(`Ticket closed by ${message.author}. Reason: **${reason}**\nThis channel will now be deleted.`);
 
   setTimeout(() => {
-    interaction.channel.delete(`Ticket closed by ${interaction.user.tag}: ${reason}`).catch(console.error);
+    message.channel.delete(`Ticket closed by ${message.author.tag}: ${reason}`).catch(console.error);
   }, 1500);
+}
+
+async function handleTicketTextCommand(message) {
+  const ticket = getTicketByChannel(message.channelId);
+  if (!ticket || ticket.status !== 'open') return false;
+
+  const content = message.content.trim();
+  const match = content.match(/^!(areply|reply|close)(?:\s+([\s\S]*))?$/i);
+  if (!match) return false;
+
+  if (!isSupportMember(message.member)) {
+    await message.reply('This command is only available to Hashwear support staff.');
+    return true;
+  }
+
+  const command = match[1].toLowerCase();
+  const text = (match[2] || '').trim();
+
+  if (command === 'areply') {
+    await sendTextReply(message, ticket, false, text);
+    return true;
+  }
+
+  if (command === 'reply') {
+    await sendTextReply(message, ticket, true, text);
+    return true;
+  }
+
+  if (command === 'close') {
+    await closeTextTicket(message, ticket, text);
+    return true;
+  }
+
+  return false;
 }
 
 client.once('ready', async readyClient => {
@@ -340,15 +368,26 @@ client.once('ready', async readyClient => {
 
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
-  if (message.guild) return;
+
+  if (!message.guild) {
+    try {
+      await forwardCustomerMessage(message);
+    } catch (error) {
+      console.error('DM ticket handling failed:', error);
+      await message.author.send(
+        'Hashwear Support could not open your ticket right now. Please try again in a moment.'
+      ).catch(() => {});
+    }
+    return;
+  }
+
+  if (message.guild.id !== GUILD_ID) return;
 
   try {
-    await forwardCustomerMessage(message);
+    await handleTicketTextCommand(message);
   } catch (error) {
-    console.error('DM ticket handling failed:', error);
-    await message.author.send(
-      'Hashwear Support could not open your ticket right now. Please try again in a moment.'
-    ).catch(() => {});
+    console.error('Ticket text command failed:', error);
+    await message.reply('Something went wrong while running that command.').catch(() => {});
   }
 });
 
@@ -360,9 +399,6 @@ client.on('interactionCreate', async interaction => {
   }
 
   try {
-    if (interaction.commandName === 'areply') return sendStaffReply(interaction, false);
-    if (interaction.commandName === 'reply') return sendStaffReply(interaction, true);
-    if (interaction.commandName === 'close') return handleClose(interaction);
     if (interaction.commandName === 'notify') return handleNotify(interaction);
 
     if (interaction.commandName === 'ticket-info') {
