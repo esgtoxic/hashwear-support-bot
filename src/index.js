@@ -94,6 +94,139 @@ async function fetchGuild() {
   return client.guilds.fetch(GUILD_ID);
 }
 
+async function ensureSupportCommandsChannel(guild) {
+  const channelName = 'support-commands';
+
+  const permissionOverwrites = [
+    {
+      id: guild.roles.everyone.id,
+      deny: [PermissionFlagsBits.ViewChannel],
+    },
+    {
+      id: client.user.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.EmbedLinks,
+        PermissionFlagsBits.ManageChannels,
+      ],
+    },
+    ...SUPPORT_ROLE_IDS.map(roleId => ({
+      id: roleId,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.ReadMessageHistory,
+      ],
+      deny: [PermissionFlagsBits.SendMessages],
+    })),
+  ];
+
+  let channel = guild.channels.cache.find(ch =>
+    ch.type === ChannelType.GuildText &&
+    ch.name === channelName &&
+    ch.parentId === SUPPORT_CATEGORY_ID
+  );
+
+  if (!channel) {
+    channel = await guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: SUPPORT_CATEGORY_ID,
+      topic: 'Private Hashwear Support staff command guide',
+      permissionOverwrites,
+      reason: 'Create private Hashwear Support command guide',
+    });
+  } else {
+    await channel.permissionOverwrites.set(permissionOverwrites).catch(error => {
+      console.error('Could not refresh support-commands permissions:', error);
+    });
+
+    if (channel.topic !== 'Private Hashwear Support staff command guide') {
+      await channel.setTopic('Private Hashwear Support staff command guide').catch(() => {});
+    }
+  }
+
+  const guide = new EmbedBuilder()
+    .setTitle('Hashwear Support — Staff Commands')
+    .setDescription(
+      'Use these commands **inside a customer ticket channel**.\n\n' +
+      'Normal messages without a command stay inside the staff ticket and are **not** sent to the customer.'
+    )
+    .addFields(
+      {
+        name: 'Anonymous Reply',
+        value: '`.areply your message`\nSends the message to the customer as **Hashwear Support** without showing the staff member\'s name.',
+        inline: false,
+      },
+      {
+        name: 'Direct Reply',
+        value: '`.reply your message`\nSends the message to the customer and shows the replying staff member\'s name.',
+        inline: false,
+      },
+      {
+        name: 'Photos, GIFs & Files',
+        value: 'Send the photo, GIF, sticker, or file in the ticket first, then immediately type `.areply` or `.reply`.\nThe bot forwards that media to the customer and logs the outgoing reply in an embed box.',
+        inline: false,
+      },
+      {
+        name: 'Subscribe to Ticket',
+        value: '`.sub`\nSubscribes yourself. You will be tagged whenever that customer sends a new message.',
+        inline: false,
+      },
+      {
+        name: 'Unsubscribe from Ticket',
+        value: '`.unsub`\nStops notifications for yourself on that ticket.',
+        inline: false,
+      },
+      {
+        name: 'Ticket Information',
+        value: '`.ticketinfo`\nShows the customer, user ID, ticket opening time, and current notification subscribers.',
+        inline: false,
+      },
+      {
+        name: 'Close Ticket',
+        value: '`.close reason`\nCloses the ticket, notifies the customer, and removes the ticket channel.',
+        inline: false,
+      },
+      {
+        name: 'Internal Staff Conversation',
+        value: 'Just type normally in the ticket channel. Messages without `.areply` or `.reply` remain internal and are never sent to the customer.',
+        inline: false,
+      },
+    )
+    .setFooter({ text: 'Hashwear Support • Staff Only' })
+    .setTimestamp();
+
+  const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  const existing = recent
+    ? [...recent.values()].find(msg =>
+        msg.author.id === client.user.id &&
+        msg.embeds?.[0]?.title === 'Hashwear Support — Staff Commands'
+      )
+    : null;
+
+  if (existing) {
+    await existing.edit({ embeds: [guide] });
+
+    for (const msg of recent.values()) {
+      if (
+        msg.id !== existing.id &&
+        msg.author.id === client.user.id &&
+        msg.embeds?.[0]?.title === 'Hashwear Support — Staff Commands'
+      ) {
+        await msg.delete().catch(() => {});
+      }
+    }
+
+    return channel;
+  }
+
+  const guideMessage = await channel.send({ embeds: [guide] });
+  await guideMessage.pin().catch(() => {});
+
+  return channel;
+}
 async function createTicketForUser(user) {
   const guild = await fetchGuild();
   const existing = getTicket(user.id);
@@ -663,7 +796,9 @@ client.once('ready', async readyClient => {
   try {
     const guild = await readyClient.guilds.fetch(GUILD_ID);
     await guild.commands.set(commands);
+    await ensureSupportCommandsChannel(guild);
     console.log(`Cleared slash commands; Hashwear Support now uses dot commands in ${guild.name}`);
+    console.log('Private support-commands guide is ready.');
   } catch (error) {
     console.error('Slash command registration failed:', error);
   }
