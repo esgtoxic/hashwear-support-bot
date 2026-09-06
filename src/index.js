@@ -155,7 +155,7 @@ async function createTicketForUser(user) {
     .addFields(
       { name: 'Anonymous reply', value: '`.areply your message`', inline: false },
       { name: 'Direct reply', value: '`.reply your message` — customer sees your staff name', inline: false },
-      { name: 'Notifications', value: '`.notify` — notify yourself, `.notify add-user @user`, `.notify add-role @role`, `.notify list`', inline: false },
+      { name: 'Notifications', value: '`.sub` — subscribe yourself, `.unsub` — unsubscribe yourself', inline: false },
       { name: 'Ticket info', value: '`.ticketinfo`', inline: false },
       { name: 'Close', value: '`.close reason`', inline: false },
     )
@@ -324,94 +324,52 @@ async function closeTextTicket(message, ticket, reasonText) {
   }, 1500);
 }
 
-async function handleNotifyTextCommand(message, ticket, argsText) {
-  const parts = argsText.trim().split(/\s+/).filter(Boolean);
-  const action = (parts[0] || '').toLowerCase();
+async function subscribeToTicket(message, ticket) {
+  const current = getTicket(ticket.userId);
+  const alreadySubscribed = (current.notifyUserIds || []).includes(message.author.id);
 
-  if (!action) {
-    const current = getTicket(ticket.userId);
-    const alreadyNotified = (current.notifyUserIds || []).includes(message.author.id);
-
-    if (alreadyNotified) {
-      await message.reply({
-        content: `${message.author} is already being notified for this ticket.`,
-        allowedMentions: { users: [message.author.id] },
-      });
-      return;
-    }
-
-    mutateNotifications(ticket.userId, currentTicket => {
-      const set = new Set(currentTicket.notifyUserIds || []);
-      set.add(message.author.id);
-      currentTicket.notifyUserIds = [...set];
-    });
-
+  if (alreadySubscribed) {
     await message.reply({
-      content: `${message.author} will now be notified whenever this customer sends a message.`,
+      content: `${message.author} is already subscribed to notifications for this ticket.`,
       allowedMentions: { users: [message.author.id] },
     });
     return;
   }
 
-  if (action === 'list') {
-    const current = getTicket(ticket.userId);
-    const users = (current.notifyUserIds || []).map(id => `<@${id}>`).join(', ') || 'None';
-    const roles = (current.notifyRoleIds || []).map(id => `<@&${id}>`).join(', ') || 'None';
+  mutateNotifications(ticket.userId, currentTicket => {
+    const set = new Set(currentTicket.notifyUserIds || []);
+    set.add(message.author.id);
+    currentTicket.notifyUserIds = [...set];
+  });
 
+  await message.reply({
+    content: `${message.author} will now be notified whenever this customer sends a message.`,
+    allowedMentions: { users: [message.author.id] },
+  });
+}
+
+async function unsubscribeFromTicket(message, ticket) {
+  const current = getTicket(ticket.userId);
+  const isSubscribed = (current.notifyUserIds || []).includes(message.author.id);
+
+  if (!isSubscribed) {
     await message.reply({
-      content: `**Notification users:** ${users}\n**Notification roles:** ${roles}`,
-      allowedMentions: { parse: [] },
+      content: `${message.author} is not subscribed to notifications for this ticket.`,
+      allowedMentions: { users: [message.author.id] },
     });
     return;
   }
 
-  if (action === 'add-user' || action === 'remove-user') {
-    const target = message.mentions.users.first();
-    if (!target) {
-      await message.reply(`Usage: .notify ${action} @user`);
-      return;
-    }
+  mutateNotifications(ticket.userId, currentTicket => {
+    const set = new Set(currentTicket.notifyUserIds || []);
+    set.delete(message.author.id);
+    currentTicket.notifyUserIds = [...set];
+  });
 
-    mutateNotifications(ticket.userId, current => {
-      const set = new Set(current.notifyUserIds || []);
-      if (action === 'add-user') set.add(target.id);
-      else set.delete(target.id);
-      current.notifyUserIds = [...set];
-    });
-
-    await message.reply(
-      action === 'add-user'
-        ? `${target} will now be pinged when this customer messages.`
-        : `${target} will no longer be pinged for this ticket.`
-    );
-    return;
-  }
-
-  if (action === 'add-role' || action === 'remove-role') {
-    const role = message.mentions.roles.first();
-    if (!role) {
-      await message.reply(`Usage: .notify ${action} @role`);
-      return;
-    }
-
-    mutateNotifications(ticket.userId, current => {
-      const set = new Set(current.notifyRoleIds || []);
-      if (action === 'add-role') set.add(role.id);
-      else set.delete(role.id);
-      current.notifyRoleIds = [...set];
-    });
-
-    await message.reply(
-      action === 'add-role'
-        ? `${role} will now be pinged when this customer messages.`
-        : `${role} will no longer be pinged for this ticket.`
-    );
-    return;
-  }
-
-  await message.reply(
-    'Unknown notify action. Use `.notify add-user @user`, `.notify remove-user @user`, `.notify add-role @role`, `.notify remove-role @role`, or `.notify list`.'
-  );
+  await message.reply({
+    content: `${message.author} will no longer be notified for this ticket.`,
+    allowedMentions: { users: [message.author.id] },
+  });
 }
 
 async function sendTicketInfo(message, ticket) {
@@ -435,7 +393,7 @@ async function handleTicketTextCommand(message) {
   if (!ticket || ticket.status !== 'open') return false;
 
   const content = message.content.trim();
-  const match = content.match(/^\.(areply|reply|close|notify|ticketinfo)(?:\s+([\s\S]*))?$/i);
+  const match = content.match(/^\.(areply|reply|close|sub|unsub|ticketinfo)(?:\s+([\s\S]*))?$/i);
   if (!match) return false;
 
   if (!isSupportMember(message.member)) {
@@ -461,8 +419,13 @@ async function handleTicketTextCommand(message) {
     return true;
   }
 
-  if (command === 'notify') {
-    await handleNotifyTextCommand(message, ticket, text);
+  if (command === 'sub') {
+    await subscribeToTicket(message, ticket);
+    return true;
+  }
+
+  if (command === 'unsub') {
+    await unsubscribeFromTicket(message, ticket);
     return true;
   }
 
