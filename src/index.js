@@ -295,8 +295,6 @@ async function sendTextReply(message, ticket, direct, replyText) {
     files: attachments.map(file => file.url),
   });
 
-  const confirmation = await message.reply('✅ Reply sent.');
-  setTimeout(() => confirmation.delete().catch(() => {}), 2500);
 }
 
 async function closeTextTicket(message, ticket, reasonText) {
