@@ -211,11 +211,7 @@ async function sendStaffReply(interaction, direct) {
   const ctx = await getTicketContext(interaction);
   if (ctx.error) return interaction.reply({ content: ctx.error, ephemeral: true });
 
-  const message = interaction.options.getString('message')?.trim();
-  const file = interaction.options.getAttachment('file');
-  if (!message && !file) {
-    return interaction.reply({ content: 'Add a message or attachment to send.', ephemeral: true });
-  }
+  const message = interaction.options.getString('message', true).trim();
 
   const customer = await client.users.fetch(ctx.ticket.userId).catch(() => null);
   if (!customer) {
@@ -224,13 +220,11 @@ async function sendStaffReply(interaction, direct) {
 
   const staffName = interaction.member?.displayName || interaction.user.globalName || interaction.user.username;
   const dmPayload = {
-    // The Discord DM already shows the bot name "Hashwear Support".
-    // Anonymous replies therefore do not add "Hashwear Support:" again.
-    // Direct replies show only the staff member's name so the customer knows who answered.
+    // Discord already displays the bot name, so anonymous replies contain only the text.
+    // Direct replies show the staff member's name above the text.
     content: direct
-      ? `**${staffName}:**${message ? `\n${message}` : ''}`
-      : (message || undefined),
-    files: file ? [file.url] : [],
+      ? `**${staffName}:**\n${message}`
+      : message,
   };
 
   try {
@@ -249,11 +243,8 @@ async function sendStaffReply(interaction, direct) {
       iconURL: interaction.user.displayAvatarURL(),
     })
     .setTitle(direct ? 'Direct reply sent' : 'Anonymous reply sent')
-    .setDescription(message || '*Attachment only*')
+    .setDescription(message)
     .setTimestamp();
-
-  if (file?.contentType?.startsWith('image/')) log.setImage(file.url);
-  if (file) log.addFields({ name: 'Attachment', value: `[${file.name || 'file'}](${file.url})` });
 
   await interaction.reply({ content: 'Reply sent to the customer.', ephemeral: true });
   await interaction.channel.send({ embeds: [log] });
