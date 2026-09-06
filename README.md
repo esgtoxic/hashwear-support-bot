@@ -34,22 +34,22 @@ Customer sees:
 
 > Reply from Staff Name: your message
 
-### `/notify add-user user:@person`
+### `.notify add-user user:@person`
 Pings that staff member whenever the customer sends a DM.
 
-### `/notify remove-user user:@person`
+### `.notify remove-user user:@person`
 Stops pinging that member.
 
-### `/notify add-role role:@role`
+### `.notify add-role role:@role`
 Pings a role whenever the customer sends a DM.
 
-### `/notify remove-role role:@role`
+### `.notify remove-role role:@role`
 Stops pinging that role.
 
-### `/notify list`
+### `.notify list`
 Shows notification targets for the current ticket.
 
-### `/ticket-info`
+### `.ticketinfo`
 Shows customer ID, ticket age, and notification targets.
 
 ### `/close reason:...`
