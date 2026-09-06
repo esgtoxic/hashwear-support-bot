@@ -155,7 +155,7 @@ async function createTicketForUser(user) {
     .addFields(
       { name: 'Anonymous reply', value: '`.areply your message`', inline: false },
       { name: 'Direct reply', value: '`.reply your message` — customer sees your staff name', inline: false },
-      { name: 'Notifications', value: '`.notify add-user @user`, `.notify add-role @role`, `.notify list`', inline: false },
+      { name: 'Notifications', value: '`.notify` — notify yourself, `.notify add-user @user`, `.notify add-role @role`, `.notify list`', inline: false },
       { name: 'Ticket info', value: '`.ticketinfo`', inline: false },
       { name: 'Close', value: '`.close reason`', inline: false },
     )
@@ -329,9 +329,12 @@ async function handleNotifyTextCommand(message, ticket, argsText) {
   const action = (parts[0] || '').toLowerCase();
 
   if (!action) {
-    await message.reply(
-      'Usage: `.notify add-user @user`, `.notify remove-user @user`, `.notify add-role @role`, `.notify remove-role @role`, or `.notify list`'
-    );
+    mutateNotifications(ticket.userId, current => {
+      const set = new Set(current.notifyUserIds || []);
+      set.add(message.author.id);
+      current.notifyUserIds = [...set];
+    });
+
     return;
   }
 
