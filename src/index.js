@@ -223,9 +223,13 @@ async function sendStaffReply(interaction, direct) {
   }
 
   const staffName = interaction.member?.displayName || interaction.user.globalName || interaction.user.username;
-  const heading = direct ? `**Reply from ${staffName}:**` : '**Hashwear Support:**';
   const dmPayload = {
-    content: `${heading}\n${message || ''}`.trim(),
+    // The Discord DM already shows the bot name "Hashwear Support".
+    // Anonymous replies therefore do not add "Hashwear Support:" again.
+    // Direct replies show only the staff member's name so the customer knows who answered.
+    content: direct
+      ? `**${staffName}:**${message ? `\n${message}` : ''}`
+      : (message || undefined),
     files: file ? [file.url] : [],
   };
 
@@ -319,7 +323,7 @@ async function handleClose(interaction) {
 
   if (customer) {
     await customer.send(
-      `**Hashwear Support:** Your ticket has been closed.\nReason: ${reason}\n\nIf you need help again, just send another DM to this bot and a new ticket will open.`
+      `Your ticket has been closed.\nReason: ${reason}\n\nIf you need help again, just send another DM to this bot and a new ticket will open.`
     ).catch(() => {});
   }
 
