@@ -34,7 +34,7 @@ Customer sees:
 
 > Reply from Staff Name: your message
 
-### `.notify add-user user:@person`
+### .notify — subscribe yourself to notifications for the current ticket
 Pings that staff member whenever the customer sends a DM.
 
 ### `.notify remove-user user:@person`
