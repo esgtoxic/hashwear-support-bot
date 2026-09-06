@@ -24,6 +24,12 @@ const SUPPORT_CATEGORY_ID = process.env.SUPPORT_CATEGORY_ID;
 const SUPPORT_ROLE_IDS = splitIds(process.env.SUPPORT_ROLE_IDS);
 const PORT = Number(process.env.PORT || 10000);
 
+// Discord's GIF picker sends the selected GIF as a separate message.
+// When a staff member sends .areply or .reply with nothing after it,
+// the next message from that staff member in that ticket is treated as the reply.
+const pendingReplies = new Map();
+const PENDING_REPLY_TIMEOUT_MS = 60_000;
+
 if (!TOKEN || !GUILD_ID || !SUPPORT_CATEGORY_ID) {
   console.error('Missing required environment variables: DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, SUPPORT_CATEGORY_ID');
   process.exit(1);
@@ -216,32 +222,61 @@ async function forwardCustomerMessage(message) {
   });
 }
 
-async function sendTextReply(message, ticket, direct, replyText) {
+function getPendingReplyKey(message) {
+  return `${message.channelId}:${message.author.id}`;
+}
+
+function getGifMedia(message) {
+  const gifEmbed = message.embeds.find(embed =>
+    embed.type === 'gifv' ||
+    embed.video?.url ||
+    (embed.url && /tenor\.com|giphy\.com/i.test(embed.url))
+  );
+
+  if (!gifEmbed) return null;
+
+  return {
+    pageUrl: gifEmbed.url || null,
+    mediaUrl: gifEmbed.video?.url || gifEmbed.image?.url || gifEmbed.thumbnail?.url || null,
+    previewUrl: gifEmbed.image?.url || gifEmbed.thumbnail?.url || null,
+  };
+}
+
+async function sendTextReply(message, ticket, direct, replyText, options = {}) {
   const customer = await client.users.fetch(ticket.userId).catch(() => null);
   if (!customer) {
     await message.reply('I could not find the customer account.');
-    return;
+    return false;
   }
 
   const attachments = [...message.attachments.values()];
-  if (!replyText && !attachments.length) {
-    await message.reply(`Usage: ${direct ? '.reply' : '.areply'} your message`);
-    return;
+  const gifMedia = getGifMedia(message);
+
+  // A Discord GIF-picker result may only exist as a gifv embed.
+  if (!replyText && !attachments.length && !gifMedia) {
+    return false;
   }
 
   const staffName = message.member?.displayName || message.author.globalName || message.author.username;
   const imageAttachment = attachments.find(file => file.contentType?.startsWith('image/'));
+
+  let displayText = replyText || '';
+  if (gifMedia?.pageUrl && displayText) {
+    displayText = displayText.replace(gifMedia.pageUrl, '').trim();
+  }
 
   const replyEmbed = new EmbedBuilder()
     .setAuthor({
       name: direct ? `${staffName} • Support` : 'Hashwear Support',
       iconURL: direct ? message.author.displayAvatarURL() : client.user.displayAvatarURL(),
     })
-    .setDescription(replyText || '*Attachment*')
+    .setDescription(displayText || (gifMedia ? '*GIF*' : '*Attachment*'))
     .setTimestamp();
 
   if (imageAttachment) {
     replyEmbed.setImage(imageAttachment.url);
+  } else if (gifMedia?.previewUrl) {
+    replyEmbed.setImage(gifMedia.previewUrl);
   }
 
   const nonImageAttachments = attachments.filter(file => !file.contentType?.startsWith('image/'));
@@ -255,17 +290,47 @@ async function sendTextReply(message, ticket, direct, replyText) {
     });
   }
 
+  const files = attachments.map(file => file.url);
+
+  // GIF picker embeds usually expose an MP4/GIF media URL. Sending it as a file
+  // makes the animation reach the customer instead of remaining only in the ticket.
+  if (gifMedia?.mediaUrl && !gifMedia.previewUrl?.endsWith(gifMedia.mediaUrl)) {
+    files.push(gifMedia.mediaUrl);
+  }
+
   const dmPayload = {
     embeds: [replyEmbed],
-    files: attachments.map(file => file.url),
+    files,
   };
+
+  // If Discord didn't expose a downloadable media URL, keep the original GIF URL
+  // so Discord can render it for the customer.
+  if (gifMedia?.pageUrl && !gifMedia?.mediaUrl) {
+    dmPayload.content = gifMedia.pageUrl;
+  }
 
   try {
     await customer.send(dmPayload);
   } catch (error) {
-    console.error('Customer DM failed:', error);
-    await message.reply('I could not DM the customer. They may have DMs disabled or blocked the bot.');
-    return;
+    // Some providers expose a media URL that Discord cannot re-upload.
+    // Retry with the original GIF link so the GIF still reaches the customer.
+    if (gifMedia?.pageUrl) {
+      try {
+        await customer.send({
+          content: gifMedia.pageUrl,
+          embeds: [replyEmbed],
+          files: attachments.map(file => file.url),
+        });
+      } catch (retryError) {
+        console.error('Customer GIF DM failed:', retryError);
+        await message.reply('I could not DM the customer. They may have DMs disabled or blocked the bot.');
+        return false;
+      }
+    } else {
+      console.error('Customer DM failed:', error);
+      await message.reply('I could not DM the customer. They may have DMs disabled or blocked the bot.');
+      return false;
+    }
   }
 
   const ticketReplyEmbed = new EmbedBuilder()
@@ -273,11 +338,13 @@ async function sendTextReply(message, ticket, direct, replyText) {
       name: direct ? `${staffName} • Direct Reply` : `${staffName} • Anonymous Reply`,
       iconURL: message.author.displayAvatarURL(),
     })
-    .setDescription(replyText || '*Attachment*')
+    .setDescription(displayText || (gifMedia ? '*GIF*' : '*Attachment*'))
     .setTimestamp();
 
   if (imageAttachment) {
     ticketReplyEmbed.setImage(imageAttachment.url);
+  } else if (gifMedia?.previewUrl) {
+    ticketReplyEmbed.setImage(gifMedia.previewUrl);
   }
 
   if (nonImageAttachments.length) {
@@ -292,9 +359,14 @@ async function sendTextReply(message, ticket, direct, replyText) {
 
   await message.channel.send({
     embeds: [ticketReplyEmbed],
-    files: attachments.map(file => file.url),
+    files,
   });
 
+  if (options.deleteSource) {
+    await message.delete().catch(() => {});
+  }
+
+  return true;
 }
 
 async function closeTextTicket(message, ticket, reasonText) {
@@ -404,13 +476,25 @@ async function handleTicketTextCommand(message) {
   const command = match[1].toLowerCase();
   const text = (match[2] || '').trim();
 
-  if (command === 'areply') {
-    await sendTextReply(message, ticket, false, text);
-    return true;
-  }
+  if (command === 'areply' || command === 'reply') {
+    const direct = command === 'reply';
+    const sent = await sendTextReply(message, ticket, direct, text);
 
-  if (command === 'reply') {
-    await sendTextReply(message, ticket, true, text);
+    if (!sent) {
+      const key = getPendingReplyKey(message);
+      pendingReplies.set(key, {
+        direct,
+        expiresAt: Date.now() + PENDING_REPLY_TIMEOUT_MS,
+      });
+
+      setTimeout(() => {
+        const pending = pendingReplies.get(key);
+        if (pending && pending.expiresAt <= Date.now()) {
+          pendingReplies.delete(key);
+        }
+      }, PENDING_REPLY_TIMEOUT_MS + 1000);
+    }
+
     return true;
   }
 
@@ -468,6 +552,32 @@ client.on('messageCreate', async message => {
   if (message.guild.id !== GUILD_ID) return;
 
   try {
+    const pendingKey = getPendingReplyKey(message);
+    const pending = pendingReplies.get(pendingKey);
+
+    if (pending) {
+      if (pending.expiresAt <= Date.now()) {
+        pendingReplies.delete(pendingKey);
+      } else if (!message.content.trim().startsWith('.')) {
+        const ticket = getTicketByChannel(message.channelId);
+
+        if (ticket?.status === 'open' && isSupportMember(message.member)) {
+          const sent = await sendTextReply(
+            message,
+            ticket,
+            pending.direct,
+            message.content.trim(),
+            { deleteSource: true }
+          );
+
+          if (sent) {
+            pendingReplies.delete(pendingKey);
+            return;
+          }
+        }
+      }
+    }
+
     await handleTicketTextCommand(message);
   } catch (error) {
     console.error('Ticket text command failed:', error);
