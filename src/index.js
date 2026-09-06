@@ -468,7 +468,13 @@ async function tryHandlePendingReply(message, options = {}) {
     return false;
   }
 
-  if (message.content?.trim().startsWith('.')) return false;
+  const trimmedContent = message.content?.trim() || '';
+  const isDotCommand = trimmedContent.startsWith('.');
+  const isOriginalReplyCommand =
+    pending.commandMessageId === message.id &&
+    /^\.(?:areply|reply)$/i.test(trimmedContent);
+
+  if (isDotCommand && !isOriginalReplyCommand) return false;
 
   const processingKey = `${pendingKey}:${message.id}`;
   if (processingPendingMessages.has(processingKey)) return false;
@@ -488,7 +494,13 @@ async function tryHandlePendingReply(message, options = {}) {
       return false;
     }
 
-    const text = refreshed.content?.trim() || '';
+    const refreshedContent = refreshed.content?.trim() || '';
+    const text =
+      pending.commandMessageId === refreshed.id &&
+      /^\.(?:areply|reply)$/i.test(refreshedContent)
+        ? ''
+        : refreshedContent;
+
     const sent = await sendTextReply(
       refreshed,
       ticket,
@@ -526,12 +538,20 @@ async function handleTicketTextCommand(message) {
 
   if (command === 'areply' || command === 'reply') {
     const direct = command === 'reply';
-    const sent = await sendTextReply(message, ticket, direct, text);
+
+    let replyMessage = message;
+    if (!text && !message.attachments.size && !getGifMedia(message, text)) {
+      await new Promise(resolve => setTimeout(resolve, 900));
+      replyMessage = await message.channel.messages.fetch(message.id).catch(() => message);
+    }
+
+    const sent = await sendTextReply(replyMessage, ticket, direct, text);
 
     if (!sent) {
       const key = getPendingReplyKey(message);
       pendingReplies.set(key, {
         direct,
+        commandMessageId: message.id,
         expiresAt: Date.now() + PENDING_REPLY_TIMEOUT_MS,
       });
 
