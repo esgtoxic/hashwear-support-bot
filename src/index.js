@@ -258,6 +258,46 @@ function getGifMedia(message, replyText = '') {
   };
 }
 
+function getStickerMedia(message) {
+  const sticker = message.stickers?.first?.();
+  if (!sticker) return null;
+
+  return {
+    name: sticker.name || 'Sticker',
+    url: sticker.url || null,
+  };
+}
+
+function hasForwardableMedia(message) {
+  return Boolean(
+    message?.attachments?.size ||
+    getGifMedia(message, message?.content || '') ||
+    getStickerMedia(message)
+  );
+}
+
+async function findPreviousMediaMessage(commandMessage) {
+  const recent = await commandMessage.channel.messages.fetch({
+    limit: 15,
+    before: commandMessage.id,
+  }).catch(() => null);
+
+  if (!recent) return null;
+
+  const candidates = [...recent.values()]
+    .filter(msg => msg.author?.id === commandMessage.author.id)
+    .sort((a, b) => b.createdTimestamp - a.createdTimestamp);
+
+  for (const candidate of candidates) {
+    // Only grab a recent media post from the same staff member.
+    if (commandMessage.createdTimestamp - candidate.createdTimestamp > 120_000) break;
+    if (candidate.content?.trim().startsWith('.')) continue;
+    if (hasForwardableMedia(candidate)) return candidate;
+  }
+
+  return null;
+}
+
 async function sendTextReply(message, ticket, direct, replyText, options = {}) {
   const customer = await client.users.fetch(ticket.userId).catch(() => null);
   if (!customer) {
@@ -267,9 +307,10 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
 
   const attachments = [...message.attachments.values()];
   const gifMedia = getGifMedia(message, replyText);
+  const stickerMedia = getStickerMedia(message);
 
-  // A Discord GIF-picker result may only exist as a gifv embed.
-  if (!replyText && !attachments.length && !gifMedia) {
+  // Discord media can arrive as an attachment, a gifv embed, or a sticker.
+  if (!replyText && !attachments.length && !gifMedia && !stickerMedia) {
     return false;
   }
 
@@ -286,13 +327,15 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
       name: direct ? `${staffName} • Support` : 'Hashwear Support',
       iconURL: direct ? message.author.displayAvatarURL() : client.user.displayAvatarURL(),
     })
-    .setDescription(displayText || (gifMedia ? '*GIF*' : '*Attachment*'))
+    .setDescription(displayText || (gifMedia ? '*GIF*' : stickerMedia ? `*${stickerMedia.name}*` : '*Attachment*'))
     .setTimestamp();
 
   if (imageAttachment) {
     replyEmbed.setImage(imageAttachment.url);
   } else if (gifMedia?.previewUrl) {
     replyEmbed.setImage(gifMedia.previewUrl);
+  } else if (stickerMedia?.url) {
+    replyEmbed.setImage(stickerMedia.url);
   }
 
   const nonImageAttachments = attachments.filter(file => !file.contentType?.startsWith('image/'));
@@ -317,6 +360,8 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
   // is sent as normal message content. Discord then renders the animated preview.
   if (gifMedia?.pageUrl) {
     dmPayload.content = gifMedia.pageUrl;
+  } else if (stickerMedia?.url) {
+    dmPayload.content = stickerMedia.url;
   }
 
   try {
@@ -332,13 +377,15 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
       name: direct ? `${staffName} • Direct Reply` : `${staffName} • Anonymous Reply`,
       iconURL: message.author.displayAvatarURL(),
     })
-    .setDescription(displayText || (gifMedia ? '*GIF*' : '*Attachment*'))
+    .setDescription(displayText || (gifMedia ? '*GIF*' : stickerMedia ? `*${stickerMedia.name}*` : '*Attachment*'))
     .setTimestamp();
 
   if (imageAttachment) {
     ticketReplyEmbed.setImage(imageAttachment.url);
   } else if (gifMedia?.previewUrl) {
     ticketReplyEmbed.setImage(gifMedia.previewUrl);
+  } else if (stickerMedia?.url) {
+    ticketReplyEmbed.setImage(stickerMedia.url);
   }
 
   if (nonImageAttachments.length) {
@@ -352,7 +399,7 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
   }
 
   await message.channel.send({
-    content: gifMedia?.pageUrl || undefined,
+    content: gifMedia?.pageUrl || stickerMedia?.url || undefined,
     embeds: [ticketReplyEmbed],
     files: attachments.map(file => file.url),
   });
@@ -540,12 +587,32 @@ async function handleTicketTextCommand(message) {
     const direct = command === 'reply';
 
     let replyMessage = message;
-    if (!text && !message.attachments.size && !getGifMedia(message, text)) {
-      await new Promise(resolve => setTimeout(resolve, 900));
+    if (!text && !message.attachments.size && !getGifMedia(message, text) && !getStickerMedia(message)) {
+      await new Promise(resolve => setTimeout(resolve, 700));
       replyMessage = await message.channel.messages.fetch(message.id).catch(() => message);
     }
 
-    const sent = await sendTextReply(replyMessage, ticket, direct, text);
+    let sent = await sendTextReply(replyMessage, ticket, direct, text);
+
+    // Discord's GIF picker normally sends the GIF first as its own message.
+    // If .areply/.reply is sent immediately afterwards, use that previous media message.
+    if (!sent && !text) {
+      const previousMedia = await findPreviousMediaMessage(message);
+      if (previousMedia) {
+        sent = await sendTextReply(
+          previousMedia,
+          ticket,
+          direct,
+          '',
+          { deleteSource: true }
+        );
+
+        if (sent) {
+          await message.delete().catch(() => {});
+          return true;
+        }
+      }
+    }
 
     if (!sent) {
       const key = getPendingReplyKey(message);
