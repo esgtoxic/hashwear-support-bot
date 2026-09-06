@@ -226,19 +226,34 @@ function getPendingReplyKey(message) {
   return `${message.channelId}:${message.author.id}`;
 }
 
-function getGifMedia(message) {
+function getGifMedia(message, replyText = '') {
+  const textUrlMatch = String(replyText || '').match(
+    /https?:\/\/(?:www\.)?(?:tenor\.com|giphy\.com|media\.tenor\.com|media\.giphy\.com)\/\S+/i
+  );
+
   const gifEmbed = message.embeds.find(embed =>
     embed.type === 'gifv' ||
     embed.video?.url ||
-    (embed.url && /tenor\.com|giphy\.com/i.test(embed.url))
+    (embed.url && /tenor\.com|giphy\.com|media\.tenor\.com|media\.giphy\.com/i.test(embed.url))
   );
 
-  if (!gifEmbed) return null;
+  const pageUrl =
+    textUrlMatch?.[0] ||
+    gifEmbed?.url ||
+    null;
+
+  const mediaUrl =
+    gifEmbed?.video?.url ||
+    gifEmbed?.image?.url ||
+    gifEmbed?.thumbnail?.url ||
+    null;
+
+  if (!pageUrl && !mediaUrl) return null;
 
   return {
-    pageUrl: gifEmbed.url || null,
-    mediaUrl: gifEmbed.video?.url || gifEmbed.image?.url || gifEmbed.thumbnail?.url || null,
-    previewUrl: gifEmbed.image?.url || gifEmbed.thumbnail?.url || null,
+    pageUrl,
+    mediaUrl,
+    previewUrl: gifEmbed?.image?.url || gifEmbed?.thumbnail?.url || null,
   };
 }
 
@@ -250,7 +265,7 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
   }
 
   const attachments = [...message.attachments.values()];
-  const gifMedia = getGifMedia(message);
+  const gifMedia = getGifMedia(message, replyText);
 
   // A Discord GIF-picker result may only exist as a gifv embed.
   if (!replyText && !attachments.length && !gifMedia) {
@@ -292,45 +307,23 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
 
   const files = attachments.map(file => file.url);
 
-  // GIF picker embeds usually expose an MP4/GIF media URL. Sending it as a file
-  // makes the animation reach the customer instead of remaining only in the ticket.
-  if (gifMedia?.mediaUrl && !gifMedia.previewUrl?.endsWith(gifMedia.mediaUrl)) {
-    files.push(gifMedia.mediaUrl);
-  }
-
   const dmPayload = {
     embeds: [replyEmbed],
     files,
   };
 
-  // If Discord didn't expose a downloadable media URL, keep the original GIF URL
-  // so Discord can render it for the customer.
-  if (gifMedia?.pageUrl && !gifMedia?.mediaUrl) {
+  // Discord's GIF picker is most reliable when the original Tenor/Giphy URL
+  // is sent as normal message content. Discord then renders the animated preview.
+  if (gifMedia?.pageUrl) {
     dmPayload.content = gifMedia.pageUrl;
   }
 
   try {
     await customer.send(dmPayload);
   } catch (error) {
-    // Some providers expose a media URL that Discord cannot re-upload.
-    // Retry with the original GIF link so the GIF still reaches the customer.
-    if (gifMedia?.pageUrl) {
-      try {
-        await customer.send({
-          content: gifMedia.pageUrl,
-          embeds: [replyEmbed],
-          files: attachments.map(file => file.url),
-        });
-      } catch (retryError) {
-        console.error('Customer GIF DM failed:', retryError);
-        await message.reply('I could not DM the customer. They may have DMs disabled or blocked the bot.');
-        return false;
-      }
-    } else {
-      console.error('Customer DM failed:', error);
-      await message.reply('I could not DM the customer. They may have DMs disabled or blocked the bot.');
-      return false;
-    }
+    console.error('Customer DM failed:', error);
+    await message.reply('I could not DM the customer. They may have DMs disabled or blocked the bot.');
+    return false;
   }
 
   const ticketReplyEmbed = new EmbedBuilder()
@@ -358,8 +351,9 @@ async function sendTextReply(message, ticket, direct, replyText, options = {}) {
   }
 
   await message.channel.send({
+    content: gifMedia?.pageUrl || undefined,
     embeds: [ticketReplyEmbed],
-    files,
+    files: attachments.map(file => file.url),
   });
 
   if (options.deleteSource) {
