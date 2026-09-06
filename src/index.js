@@ -28,6 +28,7 @@ const PORT = Number(process.env.PORT || 10000);
 // When a staff member sends .areply or .reply with nothing after it,
 // the next message from that staff member in that ticket is treated as the reply.
 const pendingReplies = new Map();
+const processingPendingMessages = new Set();
 const PENDING_REPLY_TIMEOUT_MS = 60_000;
 
 if (!TOKEN || !GUILD_ID || !SUPPORT_CATEGORY_ID) {
@@ -454,6 +455,59 @@ async function sendTicketInfo(message, ticket) {
   });
 }
 
+async function tryHandlePendingReply(message, options = {}) {
+  if (!message || message.author?.bot || !message.guild) return false;
+  if (message.guild.id !== GUILD_ID) return false;
+
+  const pendingKey = getPendingReplyKey(message);
+  const pending = pendingReplies.get(pendingKey);
+  if (!pending) return false;
+
+  if (pending.expiresAt <= Date.now()) {
+    pendingReplies.delete(pendingKey);
+    return false;
+  }
+
+  if (message.content?.trim().startsWith('.')) return false;
+
+  const processingKey = `${pendingKey}:${message.id}`;
+  if (processingPendingMessages.has(processingKey)) return false;
+  processingPendingMessages.add(processingKey);
+
+  try {
+    // GIF-picker embeds are sometimes attached after MESSAGE_CREATE.
+    // Give Discord a moment, then refetch the message so gifv/video data is present.
+    if (!options.skipDelay) {
+      await new Promise(resolve => setTimeout(resolve, 1400));
+    }
+
+    const refreshed = await message.channel.messages.fetch(message.id).catch(() => message);
+    const ticket = getTicketByChannel(refreshed.channelId);
+
+    if (!ticket || ticket.status !== 'open' || !isSupportMember(refreshed.member)) {
+      return false;
+    }
+
+    const text = refreshed.content?.trim() || '';
+    const sent = await sendTextReply(
+      refreshed,
+      ticket,
+      pending.direct,
+      text,
+      { deleteSource: true }
+    );
+
+    if (sent) {
+      pendingReplies.delete(pendingKey);
+      return true;
+    }
+
+    return false;
+  } finally {
+    processingPendingMessages.delete(processingKey);
+  }
+}
+
 async function handleTicketTextCommand(message) {
   const ticket = getTicketByChannel(message.channelId);
   if (!ticket || ticket.status !== 'open') return false;
@@ -546,36 +600,29 @@ client.on('messageCreate', async message => {
   if (message.guild.id !== GUILD_ID) return;
 
   try {
-    const pendingKey = getPendingReplyKey(message);
-    const pending = pendingReplies.get(pendingKey);
-
-    if (pending) {
-      if (pending.expiresAt <= Date.now()) {
-        pendingReplies.delete(pendingKey);
-      } else if (!message.content.trim().startsWith('.')) {
-        const ticket = getTicketByChannel(message.channelId);
-
-        if (ticket?.status === 'open' && isSupportMember(message.member)) {
-          const sent = await sendTextReply(
-            message,
-            ticket,
-            pending.direct,
-            message.content.trim(),
-            { deleteSource: true }
-          );
-
-          if (sent) {
-            pendingReplies.delete(pendingKey);
-            return;
-          }
-        }
-      }
-    }
+    const handledPending = await tryHandlePendingReply(message);
+    if (handledPending) return;
 
     await handleTicketTextCommand(message);
   } catch (error) {
     console.error('Ticket text command failed:', error);
     await message.reply('Something went wrong while running that command.').catch(() => {});
+  }
+});
+
+client.on('messageUpdate', async (oldMessage, newMessage) => {
+  try {
+    if (newMessage.partial) {
+      newMessage = await newMessage.fetch().catch(() => newMessage);
+    }
+
+    if (!newMessage.guild || newMessage.guild.id !== GUILD_ID) return;
+    if (newMessage.author?.bot) return;
+
+    // This catches GIF/video embed data that Discord adds after MESSAGE_CREATE.
+    await tryHandlePendingReply(newMessage, { skipDelay: true });
+  } catch (error) {
+    console.error('Pending GIF messageUpdate handling failed:', error);
   }
 });
 
