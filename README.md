@@ -34,19 +34,19 @@ Customer sees:
 
 > Reply from Staff Name: your message
 
-### .notify — subscribe yourself to notifications for the current ticket
+### .sub — subscribe yourself to notifications for the current ticket
 Pings that staff member whenever the customer sends a DM.
 
-### `.notify remove-user user:@person`
+### `.sub remove-user user:@person`
 Stops pinging that member.
 
-### `.notify add-role role:@role`
+### `.sub add-role role:@role`
 Pings a role whenever the customer sends a DM.
 
-### `.notify remove-role role:@role`
+### `.sub remove-role role:@role`
 Stops pinging that role.
 
-### `.notify list`
+### `
 Shows notification targets for the current ticket.
 
 ### `.ticketinfo`
