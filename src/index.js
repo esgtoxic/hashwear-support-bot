@@ -268,6 +268,33 @@ async function sendTextReply(message, ticket, direct, replyText) {
     return;
   }
 
+  const ticketReplyEmbed = new EmbedBuilder()
+    .setAuthor({
+      name: direct ? `${staffName} • Direct Reply` : `${staffName} • Anonymous Reply`,
+      iconURL: message.author.displayAvatarURL(),
+    })
+    .setDescription(replyText || '*Attachment*')
+    .setTimestamp();
+
+  if (imageAttachment) {
+    ticketReplyEmbed.setImage(imageAttachment.url);
+  }
+
+  if (nonImageAttachments.length) {
+    ticketReplyEmbed.addFields({
+      name: 'Attachments',
+      value: nonImageAttachments
+        .map(file => `[${file.name || 'file'}](${file.url})`)
+        .join('\n')
+        .slice(0, 1000),
+    });
+  }
+
+  await message.channel.send({
+    embeds: [ticketReplyEmbed],
+    files: attachments.map(file => file.url),
+  });
+
   const confirmation = await message.reply('✅ Reply sent.');
   setTimeout(() => confirmation.delete().catch(() => {}), 2500);
 }
