@@ -155,7 +155,8 @@ async function createTicketForUser(user) {
     .addFields(
       { name: 'Anonymous reply', value: '`.areply your message`', inline: false },
       { name: 'Direct reply', value: '`.reply your message` — customer sees your staff name', inline: false },
-      { name: 'Notifications', value: '`/notify add-user`, `/notify add-role`, `/notify list`', inline: false },
+      { name: 'Notifications', value: '`.notify add-user @user`, `.notify add-role @role`, `.notify list`', inline: false },
+      { name: 'Ticket info', value: '`.ticketinfo`', inline: false },
       { name: 'Close', value: '`.close reason`', inline: false },
     )
     .setTimestamp();
@@ -205,66 +206,6 @@ async function forwardCustomerMessage(message) {
       roles: ticket.notifyRoleIds || [],
     },
   });
-}
-
-async function getTicketContext(interaction) {
-  if (!interaction.inGuild()) return { error: 'This command only works inside a Hashwear support ticket.' };
-  const ticket = getTicketByChannel(interaction.channelId);
-  if (!ticket) return { error: 'This channel is not an active Hashwear support ticket.' };
-  return { ticket };
-}
-
-async function handleNotify(interaction) {
-  const ctx = await getTicketContext(interaction);
-  if (ctx.error) return interaction.reply({ content: ctx.error, ephemeral: true });
-
-  const sub = interaction.options.getSubcommand();
-  const userId = ctx.ticket.userId;
-
-  if (sub === 'list') {
-    const current = getTicket(userId);
-    const users = (current.notifyUserIds || []).map(id => `<@${id}>`).join(', ') || 'None';
-    const roles = (current.notifyRoleIds || []).map(id => `<@&${id}>`).join(', ') || 'None';
-    return interaction.reply({
-      content: `**Notification users:** ${users}\n**Notification roles:** ${roles}`,
-      ephemeral: true,
-      allowedMentions: { parse: [] },
-    });
-  }
-
-  if (sub === 'add-user' || sub === 'remove-user') {
-    const user = interaction.options.getUser('user', true);
-    mutateNotifications(userId, ticket => {
-      const set = new Set(ticket.notifyUserIds || []);
-      if (sub === 'add-user') set.add(user.id);
-      else set.delete(user.id);
-      ticket.notifyUserIds = [...set];
-    });
-    return interaction.reply({
-      content: sub === 'add-user'
-        ? `${user} will now be pinged when this customer messages.`
-        : `${user} will no longer be pinged for this ticket.`,
-      ephemeral: true,
-      allowedMentions: { parse: [] },
-    });
-  }
-
-  if (sub === 'add-role' || sub === 'remove-role') {
-    const role = interaction.options.getRole('role', true);
-    mutateNotifications(userId, ticket => {
-      const set = new Set(ticket.notifyRoleIds || []);
-      if (sub === 'add-role') set.add(role.id);
-      else set.delete(role.id);
-      ticket.notifyRoleIds = [...set];
-    });
-    return interaction.reply({
-      content: sub === 'add-role'
-        ? `${role} will now be pinged when this customer messages.`
-        : `${role} will no longer be pinged for this ticket.`,
-      ephemeral: true,
-      allowedMentions: { parse: [] },
-    });
-  }
 }
 
 async function sendTextReply(message, ticket, direct, replyText) {
@@ -319,12 +260,100 @@ async function closeTextTicket(message, ticket, reasonText) {
   }, 1500);
 }
 
+async function handleNotifyTextCommand(message, ticket, argsText) {
+  const parts = argsText.trim().split(/\s+/).filter(Boolean);
+  const action = (parts[0] || '').toLowerCase();
+
+  if (!action) {
+    await message.reply(
+      'Usage: `.notify add-user @user`, `.notify remove-user @user`, `.notify add-role @role`, `.notify remove-role @role`, or `.notify list`'
+    );
+    return;
+  }
+
+  if (action === 'list') {
+    const current = getTicket(ticket.userId);
+    const users = (current.notifyUserIds || []).map(id => `<@${id}>`).join(', ') || 'None';
+    const roles = (current.notifyRoleIds || []).map(id => `<@&${id}>`).join(', ') || 'None';
+
+    await message.reply({
+      content: `**Notification users:** ${users}\n**Notification roles:** ${roles}`,
+      allowedMentions: { parse: [] },
+    });
+    return;
+  }
+
+  if (action === 'add-user' || action === 'remove-user') {
+    const target = message.mentions.users.first();
+    if (!target) {
+      await message.reply(`Usage: .notify ${action} @user`);
+      return;
+    }
+
+    mutateNotifications(ticket.userId, current => {
+      const set = new Set(current.notifyUserIds || []);
+      if (action === 'add-user') set.add(target.id);
+      else set.delete(target.id);
+      current.notifyUserIds = [...set];
+    });
+
+    await message.reply(
+      action === 'add-user'
+        ? `${target} will now be pinged when this customer messages.`
+        : `${target} will no longer be pinged for this ticket.`
+    );
+    return;
+  }
+
+  if (action === 'add-role' || action === 'remove-role') {
+    const role = message.mentions.roles.first();
+    if (!role) {
+      await message.reply(`Usage: .notify ${action} @role`);
+      return;
+    }
+
+    mutateNotifications(ticket.userId, current => {
+      const set = new Set(current.notifyRoleIds || []);
+      if (action === 'add-role') set.add(role.id);
+      else set.delete(role.id);
+      current.notifyRoleIds = [...set];
+    });
+
+    await message.reply(
+      action === 'add-role'
+        ? `${role} will now be pinged when this customer messages.`
+        : `${role} will no longer be pinged for this ticket.`
+    );
+    return;
+  }
+
+  await message.reply(
+    'Unknown notify action. Use `.notify add-user @user`, `.notify remove-user @user`, `.notify add-role @role`, `.notify remove-role @role`, or `.notify list`.'
+  );
+}
+
+async function sendTicketInfo(message, ticket) {
+  const current = getTicket(ticket.userId);
+  const users = (current.notifyUserIds || []).map(id => `<@${id}>`).join(', ') || 'None';
+  const roles = (current.notifyRoleIds || []).map(id => `<@&${id}>`).join(', ') || 'None';
+
+  await message.reply({
+    content:
+      `**Customer:** <@${current.userId}> (${current.userTag})\n` +
+      `**User ID:** \`${current.userId}\`\n` +
+      `**Opened:** <t:${Math.floor(new Date(current.openedAt).getTime() / 1000)}:R>\n` +
+      `**Notify users:** ${users}\n` +
+      `**Notify roles:** ${roles}`,
+    allowedMentions: { parse: [] },
+  });
+}
+
 async function handleTicketTextCommand(message) {
   const ticket = getTicketByChannel(message.channelId);
   if (!ticket || ticket.status !== 'open') return false;
 
   const content = message.content.trim();
-  const match = content.match(/^\.(areply|reply|close)(?:\s+([\s\S]*))?$/i);
+  const match = content.match(/^\.(areply|reply|close|notify|ticketinfo)(?:\s+([\s\S]*))?$/i);
   if (!match) return false;
 
   if (!isSupportMember(message.member)) {
@@ -350,6 +379,16 @@ async function handleTicketTextCommand(message) {
     return true;
   }
 
+  if (command === 'notify') {
+    await handleNotifyTextCommand(message, ticket, text);
+    return true;
+  }
+
+  if (command === 'ticketinfo') {
+    await sendTicketInfo(message, ticket);
+    return true;
+  }
+
   return false;
 }
 
@@ -360,7 +399,7 @@ client.once('ready', async readyClient => {
   try {
     const guild = await readyClient.guilds.fetch(GUILD_ID);
     await guild.commands.set(commands);
-    console.log(`Registered ${commands.length} Hashwear Support commands in ${guild.name}`);
+    console.log(`Cleared slash commands; Hashwear Support now uses dot commands in ${guild.name}`);
   } catch (error) {
     console.error('Slash command registration failed:', error);
   }
@@ -388,41 +427,6 @@ client.on('messageCreate', async message => {
   } catch (error) {
     console.error('Ticket text command failed:', error);
     await message.reply('Something went wrong while running that command.').catch(() => {});
-  }
-});
-
-client.on('interactionCreate', async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-
-  if (!isSupport(interaction)) {
-    return interaction.reply({ content: 'This command is only available to Hashwear support staff.', ephemeral: true });
-  }
-
-  try {
-    if (interaction.commandName === 'notify') return handleNotify(interaction);
-
-    if (interaction.commandName === 'ticket-info') {
-      const ctx = await getTicketContext(interaction);
-      if (ctx.error) return interaction.reply({ content: ctx.error, ephemeral: true });
-      const ticket = getTicket(ctx.ticket.userId);
-      const users = (ticket.notifyUserIds || []).map(id => `<@${id}>`).join(', ') || 'None';
-      const roles = (ticket.notifyRoleIds || []).map(id => `<@&${id}>`).join(', ') || 'None';
-      return interaction.reply({
-        content:
-          `**Customer:** <@${ticket.userId}> (${ticket.userTag})\n` +
-          `**User ID:** \`${ticket.userId}\`\n` +
-          `**Opened:** <t:${Math.floor(new Date(ticket.openedAt).getTime() / 1000)}:R>\n` +
-          `**Notify users:** ${users}\n` +
-          `**Notify roles:** ${roles}`,
-        ephemeral: true,
-        allowedMentions: { parse: [] },
-      });
-    }
-  } catch (error) {
-    console.error('Interaction failed:', error);
-    const payload = { content: 'Something went wrong while running that command.', ephemeral: true };
-    if (interaction.replied || interaction.deferred) return interaction.followUp(payload).catch(() => {});
-    return interaction.reply(payload).catch(() => {});
   }
 });
 
