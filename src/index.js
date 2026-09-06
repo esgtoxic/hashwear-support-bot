@@ -171,9 +171,17 @@ async function forwardCustomerMessage(message) {
   const { ticket, channel, created } = await createTicketForUser(user);
 
   if (created) {
-    await user.send(
-      'Hi! Your Hashwear Support ticket has been opened. Tell us your issues with order details and our team will reply in this DM.'
-    ).catch(() => {});
+    const openedEmbed = new EmbedBuilder()
+      .setAuthor({
+        name: 'Hashwear Support',
+        iconURL: client.user.displayAvatarURL(),
+      })
+      .setDescription(
+        'Hi! Your Hashwear Support ticket has been opened. Tell us your issues with order details and our team will reply in this DM.'
+      )
+      .setTimestamp();
+
+    await user.send({ embeds: [openedEmbed] }).catch(() => {});
   }
 
   const content = message.content?.trim() || '*No text — attachment only*';
@@ -222,10 +230,33 @@ async function sendTextReply(message, ticket, direct, replyText) {
   }
 
   const staffName = message.member?.displayName || message.author.globalName || message.author.username;
+  const imageAttachment = attachments.find(file => file.contentType?.startsWith('image/'));
+
+  const replyEmbed = new EmbedBuilder()
+    .setAuthor({
+      name: direct ? `${staffName} • Support` : 'Hashwear Support',
+      iconURL: direct ? message.author.displayAvatarURL() : client.user.displayAvatarURL(),
+    })
+    .setDescription(replyText || '*Attachment*')
+    .setTimestamp();
+
+  if (imageAttachment) {
+    replyEmbed.setImage(imageAttachment.url);
+  }
+
+  const nonImageAttachments = attachments.filter(file => !file.contentType?.startsWith('image/'));
+  if (nonImageAttachments.length) {
+    replyEmbed.addFields({
+      name: 'Attachments',
+      value: nonImageAttachments
+        .map(file => `[${file.name || 'file'}](${file.url})`)
+        .join('\n')
+        .slice(0, 1000),
+    });
+  }
+
   const dmPayload = {
-    content: direct
-      ? `**${staffName}:**${replyText ? `\n${replyText}` : ''}`
-      : (replyText || undefined),
+    embeds: [replyEmbed],
     files: attachments.map(file => file.url),
   };
 
@@ -248,9 +279,17 @@ async function closeTextTicket(message, ticket, reasonText) {
   closeTicket(ticket.userId, message.author.id, reason);
 
   if (customer) {
-    await customer.send(
-      `Your ticket has been closed.\nReason: ${reason}\n\nIf you need help again, just send another DM to this bot and a new ticket will open.`
-    ).catch(() => {});
+    const closedEmbed = new EmbedBuilder()
+      .setAuthor({
+        name: 'Hashwear Support',
+        iconURL: client.user.displayAvatarURL(),
+      })
+      .setDescription(
+        `Your ticket has been closed.\n**Reason:** ${reason}\n\nIf you need help again, just send another DM to this bot and a new ticket will open.`
+      )
+      .setTimestamp();
+
+    await customer.send({ embeds: [closedEmbed] }).catch(() => {});
   }
 
   await message.channel.send(`Ticket closed by ${message.author}. Reason: **${reason}**\nThis channel will now be deleted.`);
