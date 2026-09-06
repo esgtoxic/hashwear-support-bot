@@ -5,20 +5,14 @@ const commands = [
     .setName('areply')
     .setDescription('Reply anonymously as Hashwear Support')
     .addStringOption(option =>
-      option.setName('message').setDescription('Message to send to the customer').setRequired(false)
-    )
-    .addAttachmentOption(option =>
-      option.setName('file').setDescription('Optional attachment').setRequired(false)
+      option.setName('message').setDescription('Type your reply').setRequired(true)
     ),
 
   new SlashCommandBuilder()
     .setName('reply')
     .setDescription('Reply to the customer with your staff name visible')
     .addStringOption(option =>
-      option.setName('message').setDescription('Message to send to the customer').setRequired(false)
-    )
-    .addAttachmentOption(option =>
-      option.setName('file').setDescription('Optional attachment').setRequired(false)
+      option.setName('message').setDescription('Type your reply').setRequired(true)
     ),
 
   new SlashCommandBuilder()
