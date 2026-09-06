@@ -94,6 +94,49 @@ async function fetchGuild() {
   return client.guilds.fetch(GUILD_ID);
 }
 
+const SUPPORT_TIME_ZONE = 'Asia/Kolkata';
+const SUPPORT_OPEN_HOUR = 11;
+const SUPPORT_CLOSE_HOUR = 19;
+
+function getIndiaSupportTime(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: SUPPORT_TIME_ZONE,
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+
+  const values = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return {
+    weekday: values.weekday,
+    hour: Number(values.hour),
+    minute: Number(values.minute),
+  };
+}
+
+function isWithinSupportHours(date = new Date()) {
+  const { weekday, hour } = getIndiaSupportTime(date);
+  if (weekday === 'Sun') return false;
+  return hour >= SUPPORT_OPEN_HOUR && hour < SUPPORT_CLOSE_HOUR;
+}
+
+async function sendOutOfHoursMessage(user) {
+  const embed = new EmbedBuilder()
+    .setAuthor({
+      name: 'Hashwear Support',
+      iconURL: client.user.displayAvatarURL(),
+    })
+    .setDescription(
+      '**Our support team is currently offline.**\n\n' +
+      'Support hours are **Monday to Saturday, 11:00 AM to 7:00 PM (IST)**. ' +
+      'We have received your message and our team will get back to you during the next working hours.'
+    )
+    .setFooter({ text: 'Sunday: Closed' })
+    .setTimestamp();
+
+  await user.send({ embeds: [embed] }).catch(() => {});
+}
 async function ensureSupportCommandsChannel(guild) {
   const channelName = 'support-commands';
 
@@ -322,6 +365,10 @@ async function forwardCustomerMessage(message) {
       .setTimestamp();
 
     await user.send({ embeds: [openedEmbed] }).catch(() => {});
+  }
+
+  if (!isWithinSupportHours(message.createdAt)) {
+    await sendOutOfHoursMessage(user);
   }
 
   const content = message.content?.trim() || '*No text — attachment only*';
